@@ -1,0 +1,173 @@
+
+#Setup
+```{r}
+
+library(tidyverse)
+library(ggsci)
+path <- "/Users/lovedeepdhingra/Dropbox/Lovedeep Rohan shared folder/LEGEND_T2DM/Data/"
+
+# Read.csv the parent CSV downloaded from data.ohdsi with the main cohort, highCVR, and lowCVR cohorts
+#Source: https://data.ohdsi.org/LegendT2dmClassCohortExplorer/ 
+df_all_cohorts <- read.csv(paste0(path, "IncidenceRate_20220314_0237.csv"))
+
+# Change the class of cohortId.
+# cohortId (drug name) can't be a continuous variable. It needs to have discrete values.
+df_all_cohorts$cohortId <- as.character(df_all_cohorts$cohortId)
+class(df_all_cohorts$cohortId)
+
+```
+#Common Steps
+```{r}
+
+database_list <- c("Australia_LPD","CCAE","CUIMC",
+                   "France_LPD","Germany_DA","HK-HA-DM",
+                   "MDCD","MDCR","OptumDod","OptumEHR",
+                   "SG_KTPH","UK-IMRD","US_Open_Claims")
+
+#Create filtered database with only the main cohorts.
+#Transform by filtering for years, adding sum_incidenceRate, and proportion incidence rate.
+
+df_main <- df_all_cohorts %>%
+  filter(cohortId == "101100000" | cohortId =="201100000" | 
+           cohortId =="301100000" | cohortId =="401100000") %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+
+#Same for HighCVR
+df_highCVR <- df_all_cohorts %>%
+  filter(cohortId == "101100020" | cohortId =="201100020" | 
+           cohortId =="301100020" | cohortId =="401100020") %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+
+#Same for LowCVR
+df_lowCVR <- df_all_cohorts %>%
+  filter(cohortId == "101100010" | cohortId =="201100010" | 
+           cohortId =="301100010" | cohortId =="401100010") %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+
+#Converting NaN values to zero in the prop_incidence column
+df_main[is.na(df_main)] = 0
+df_highCVR[is.na(df_highCVR)] = 0
+df_lowCVR[is.na(df_lowCVR)] = 0
+
+```
+#Main Cohorts Function and Loop
+```{r} 
+make_bars_main <- function(database_name)
+{df_main %>%
+    filter(databaseId == database_name) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "Incident Second-line Agent Use (Main Cohort)", subtitle = database_name, 
+         y="Incident Use/1000 Person-Years",x="Year", fill="Agent") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","GLP-1 RA","SGLT2i","SU")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold"),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = (paste0(database_name,"_MainCohort_BarGraph_Incident Second-line Agent Use.png")), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+}
+
+for (database_name in database_list) {
+  make_bars_main(database_name)
+}
+
+```
+#HighCVR Cohorts Function and Loop
+```{r} 
+make_bars_high <- function(database_name)
+{df_highCVR %>%
+    filter(databaseId == database_name) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "Incident Second-line Agent Use (Higher CVR)", subtitle = database_name, 
+         y="Incident Use/1000 Person-Years",x="Year", fill="Agent") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","GLP-1 RA","SGLT2i","SU")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold"),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = (paste0(database_name,"_HighCVR_BarGraph_Incident Second-line Agent Use.png")), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+}
+
+for (database_name in database_list) {
+  make_bars_high(database_name)
+}
+
+```
+#LowCVR Cohorts Function and Loop
+```{r} 
+make_bars_low <- function(database_name)
+{df_lowCVR %>%
+    filter(databaseId == database_name) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "Incident Second-line Agent Use (Lower CVR)", subtitle = database_name, 
+         y="Incident Use/1000 Person-Years",x="Year", fill="Agent") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","GLP-1 RA","SGLT2i","SU")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold"),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = (paste0(database_name,"_LowCVR_BarGraph_Incident Second-line Agent Use.png")), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+}
+
+for (database_name in database_list) {
+  make_bars_low(database_name)
+}
+
+```
+
+
+#Single bar plot for testing the code
+```{r}
+df_main %>%
+    filter(databaseId == "Australia_LPD") %>%
+    #needed to filter before moving ahead (unlike in line graphs).
+    ggplot(aes(x=calendarYear, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "Incident Second-line Agent Use (Main Cohort)", subtitle = "Australia_LPD", 
+         y="Incident Use/1000 Person-Years",x="Year", fill="Agent") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","GLP-1 RA","SGLT2i","SU")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold"),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = (paste0("Australia_LPD","_MainCohort_BarGraph_Incident Second-line Agent Use.png")), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+```
