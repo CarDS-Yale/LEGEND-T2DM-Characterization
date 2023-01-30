@@ -1,0 +1,1329 @@
+---
+fontsize: 12pt
+geometry: margin=1in
+output:
+  pdf_document:
+    keep_tex: yes
+    latex_engine: xelatex
+    md_extensions: +raw_attribute
+    toc: false
+    number_sections: yes
+header-includes:
+- \usepackage[numbers,sort&compress]{natbib}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage[normalem]{ulem}
+- \usepackage{makecell}
+- \usepackage{caption}
+- \usepackage{rotating}
+- \usepackage{multirow}
+- \usepackage{mwe,tikz}
+- \usepackage[percent]{overpic}
+- \usepackage{enumitem}
+- \usepackage{hyperref}
+- \usepackage{graphicx}
+- \newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+- \newcommand{\footerDate}{`r params$date`}
+- \renewcommand{\and}{\\}
+- \usepackage{setspace}\doublespacing
+- \AtBeginEnvironment{longtable}{\small}
+- \AtBeginEnvironment{table}{\small}
+- \AtBeginEnvironment{tabular}{\tiny}
+#- \usepackage{lineno}\linenumbers
+#- \usepackage[nolists]{endfloat}
+#- \DeclareDelayedFloatFlavour*{longtable}{table}
+longtable: yes
+mainfont: Arial
+params:
+  date: ''
+  version: 1.0.0
+  avoidLongTable: FALSE
+
+---
+
+#Setup
+```{r setup, include = FALSE}
+latex_table_font_size <- 7
+library(LegendT2dmManuscripts)
+library(kableExtra)
+library(ggsci)
+library(DatabaseConnector)
+library(devtools)
+library(tidyverse)
+library(wrapr)
+library(stringr)
+library(scales)
+library(wesanderson)
+
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+options(kableExtra.latex.load_packages = FALSE)
+options(knitr.kable.NA = "")
+options(knitr.table.format = function() {
+  if (knitr::is_latex_output()) {
+    "latex"
+  } else if (knitr::is_html_output()) {
+    "html"
+  } else {
+    "pipe"
+  }
+})
+
+```
+
+```{r data}
+#Connecting to database and pulling characterization and incidence rate table
+# 101100000,DPP4I main
+# 201100000,GLP1RA main
+# 301100000,SGLT2I main
+# 401100000,SU main
+# 101100020,DDP4I higher-cvr
+# 201100020,GLP1RA higher-cvr
+# 301100020,SGLT2I higher-cvr
+# 401100020,SU higher-cvr
+
+connectionDetails <- DatabaseConnector::createConnectionDetails(
+    dbms = "postgresql",
+    server = paste(keyring::key_get("legendt2dmServer"),
+                   keyring::key_get("legendt2dmDatabase"),
+                   sep = "/"),
+    user = keyring::key_get("legendt2dmUser"),
+    password = keyring::key_get("legendt2dmPassword"),
+    pathToDriver = keyring::key_get("postgresqlDriver"))
+connection <- connect(connectionDetails)
+
+databaseIds <- c("OptumEHR")
+
+cohortIds <- c(101100000, 201100000, 
+               301100000, 401100000,
+               101100020, 201100020,
+               301100020, 401100020)
+cohortIdsIncidence <- c(101100000, 201100000, 
+                        301100000, 401100000,
+                        101100020, 201100020,
+                        301100020, 401100020,
+                        101100010, 201100010,
+                        301100010, 401100010)
+cohortNames <- c("DDP4I", "GLP1RA","SGLT2I", "SU",
+                 "DDP4I high-cvr","GLP1RA high-cvr",
+                 "SGLT2I high-cvr","SU high-cvr")
+
+data <- getData(cohortIds = cohortIds,
+                cohortNames = cohortNames,
+                databaseIds = databaseIds)
+
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = cohortIds,
+                               cohortNames = cohortNames,
+                               databaseIds = NULL) %>%
+  arrange(cohortId)
+
+df_all_cohorts <- getIncidenceRateResult(connection = connection,
+                                         cohortIds = cohortIdsIncidence,
+                                         databaseIds = NULL,
+                                         stratifyByCalendarYear = TRUE,
+                                         stratifyByGender = FALSE,
+                                         stratifyByAgeGroup = FALSE,
+                                         minPersonYears = 1000)
+```
+
+```{r}
+#path <- "/Users/lovedeepdhingra/Dropbox/Lovedeep Rohan shared folder/LEGEND_T2DM/Data/"
+
+# Read.csv the parent CSV downloaded from data.ohdsi with the main cohort, highCVR, and lowCVR cohorts
+# Make sure not to stratify by age, gender - only stratify by calendarYear
+#Source: https://data.ohdsi.org/LegendT2dmClassCohortExplorer/  -> Incidence Rate tab
+
+#df_all_cohorts <- read.csv(paste0(path, "IncidenceRate_20220621_1555.csv"))
+
+#Need to replace database names with human-readable abbreviations. 
+
+
+
+old_new_database_names = c('Australia_LPD' = 'ALPD',
+                           'France_LPD' = 'FLPD', 
+                           'Germany_DA' = 'GDA', 
+                           'HK-HA-DM' = 'HKHA',
+                           'OptumDod' = 'OCEDM',
+                           'OptumEHR' = 'OEHR', 
+                           'UK-IMRD' = 'IMRD', 
+                           'US_Open_Claims' = 'USOC',
+                           'HIC Dundee' = 'HIC',
+                           'VA-OMOP' = 'VA')
+
+df_all_cohorts$databaseId <- str_replace_all(df_all_cohorts$databaseId, old_new_database_names)
+
+# Change the class of cohortId.
+# cohortId (drug name) can't be a continuous variable. It needs to have discrete values.
+df_all_cohorts$cohortId <- as.factor(df_all_cohorts$cohortId)
+df_all_cohorts$databaseId <- as.factor(df_all_cohorts$databaseId)
+
+```
+
+#Common Steps
+```{r}
+#Removed SG_KTPH 
+database_list <- c("ALPD","CCAE","CUIMC",
+                   "FLPD","GDA","HKHA",
+                   "MDCD","MDCR","OCEDM","OEHR",
+                   "IMRD","USOC", "HIC", "JHM", "VA", 
+                   "SIDIAP","STARR")
+
+us_database_list <- c("CCAE", "CUIMC","MDCD","MDCR","OCEDM","OEHR",
+                      "USOC","JHM", "VA", "STARR")
+us_national <- c("CCAE","MDCD",
+                "MDCR","OEHR","OCEDM",
+                "USOC")
+
+us_healthsys <- c("CUIMC","VA",
+                  "JHM", "STARR")
+
+non_us_database_list <- c("ALPD","FLPD",
+                          "GDA","HKHA",
+                          "IMRD","HIC","SIDIAP")
+
+
+#Create filtered database with only the main cohorts.
+#Transform by filtering for years, adding sum_incidenceRate, and proportion incidence rate.
+
+#To be used for database level plotting - this is grouped by databaseId!
+df_main <- df_all_cohorts %>%
+  filter(databaseId %in% database_list) %>%
+  filter(cohortId == "101100000" | cohortId =="201100000" | 
+           cohortId =="301100000" | cohortId =="401100000") %>%
+  mutate(cohortId = factor(cohortId, levels=c("101100000", "401100000", "201100000", "301100000"))) %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+#Converting NaN values to zero in the prop_incidence column
+df_main$prop_incidence[is.na(df_main$prop_incidence)] = 0
+
+
+df_highcvr<- df_all_cohorts %>%
+  filter(databaseId %in% database_list) %>%
+  filter(cohortId == "101100020" | cohortId =="201100020" | 
+           cohortId =="301100020" | cohortId =="401100020") %>%
+  mutate(cohortId = factor(cohortId, levels=c("101100020", "401100020", "201100020", "301100020"))) %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+#Converting NaN values to zero in the prop_incidence column
+df_highcvr$prop_incidence[is.na(df_highcvr$prop_incidence)] = 0
+
+df_highCVR <- df_highcvr
+
+df_lowcvr<- df_all_cohorts %>%
+  filter(databaseId %in% database_list) %>%
+  filter(cohortId == "101100010" | cohortId =="201100010" | 
+           cohortId =="301100010" | cohortId =="401100010") %>%
+  mutate(cohortId = factor(cohortId, levels=c("101100010", "401100010", "201100010", "301100010"))) %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(calendarYear) %>%
+  group_by(databaseId, .add=TRUE) %>%
+  mutate(sum_incidenceRate= sum(incidenceRate)) %>%
+  mutate(prop_incidence= incidenceRate/sum_incidenceRate)
+#Converting NaN values to zero in the prop_incidence column
+df_lowcvr$prop_incidence[is.na(df_lowcvr$prop_incidence)] = 0
+
+df_lowCVR <- df_lowcvr
+```
+
+
+#2021 proportional use across cohorts
+```{r}
+df_main_2021_us_cardio <- df_main %>%
+  filter(databaseId %in% us_database_list) %>%
+    filter(calendarYear == 2021) %>%
+    mutate(databaseId = factor(databaseId, levels=c("FLPD", "SIDIAP", "VA", "OEHR", "OCEDM", "USOC", "MDCR", "GDA", "HIC", "CCAE", "JHM", "STARR", "ALPD", "CUIMC"))) %>%
+    ggplot(aes(x=databaseId, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "", subtitle = "", 
+         y="Proportionate Incident Use",x="", fill="Agent") +
+    
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","SU", "GLP-1 RA","SGLT2i")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 14),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 1.0 , hjust = 0.9),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = ("2021_us.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+df_main_2021_us_cardio
+
+
+
+df_main_2021_non_us_cardio <- df_main %>%
+  filter(databaseId %in% non_us_database_list) %>%
+    filter(calendarYear == 2021) %>%
+    mutate(databaseId = factor(databaseId, levels=c("FLPD", "SIDIAP", "VA", "OEHR", "OCEDM", "USOC", "MDCR", "GDA", "HIC", "CCAE", "JHM", "STARR", "ALPD", "CUIMC"))) %>%
+    ggplot(aes(x=databaseId, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "", subtitle = "", 
+         y="Proportionate Incident Use",x="", fill="Agent") +
+    
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","SU", "GLP-1 RA","SGLT2i")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 14),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 1.0 , hjust = 0.9),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = ("2021_non_us.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+df_main_2021_non_us_cardio
+
+
+
+```
+
+
+#2020 proportional use across cohorts
+```{r}
+df_main_2020_us_cardio <- df_main %>%
+  filter(databaseId %in% us_database_list) %>%
+    filter(calendarYear == 2020) %>%
+    mutate(databaseId = factor(databaseId, levels=c("FLPD",  "VA", "SIDIAP", "MDCD", "USOC", "OCEDM", "GDA", "MDCR",  "OEHR","JHM", "STARR", "HIC", "ALPD", "CCAE", "CUIMC"))) %>%
+    ggplot(aes(x=databaseId, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "", subtitle = "", 
+         y="Proportionate Incident Use",x="", fill="Agent") +
+    
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","SU", "GLP-1 RA","SGLT2i")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 1.0 , hjust = 0.9),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = ("2020_us.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+df_main_2020_us_cardio
+
+
+
+df_main_2020_non_us_cardio <- df_main %>%
+  filter(databaseId %in% non_us_database_list) %>%
+    filter(calendarYear == 2020) %>%
+    mutate(databaseId = factor(databaseId, levels=c("FLPD",  "VA", "SIDIAP", "MDCD", "USOC", "OCEDM", "GDA", "MDCR",  "OEHR","JHM", "STARR", "HIC", "ALPD", "CCAE", "CUIMC"))) %>%
+    ggplot(aes(x=databaseId, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = "", subtitle = "", 
+         y="Proportionate Incident Use",x="", fill="Agent") +
+    
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm(labels=c("DPP-4i","SU", "GLP-1 RA","SGLT2i")) +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 14),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 1.0 , hjust = 0.9),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"))
+  ggsave(filename = ("2020_non_us.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+df_main_2020_non_us_cardio
+
+
+
+```
+
+
+
+
+
+
+#HighCVR cohort line graphs
+```{r}
+
+#USA National Databases
+df_highcvr %>%
+    filter(cohortId =="201100020") %>%
+    filter (databaseId %in% us_national) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[A] US National Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=14))
+  ggsave(filename = ("Prop_GLP1RA_US_National_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#USA Health System Databases
+df_highcvr %>%
+    filter(cohortId =="201100020") %>%
+    filter (databaseId %in% us_healthsys) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[B] US Health System Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_GLP1RA_US_healthsys_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+  
+
+#Non-USA
+df_highcvr %>%
+    filter(cohortId =="201100020") %>%
+    filter (databaseId %in% non_us_database_list) %>%
+    mutate(databaseId = factor(databaseId, levels=c("ALPD","HIC","GDA","IMRD","SIDIAP","HKHA","FLPD" )))%>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[C] Non-US Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_GLP1RA_Non_US_databases_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#SGLT2i
+
+#USA National Databases
+df_highcvr %>%
+    filter(cohortId =="301100020") %>%
+    filter (databaseId %in% us_national) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[A] US National Databases ", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_US_national_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+  
+
+#USA Health System Databases
+df_highcvr %>%
+    filter(cohortId =="301100020") %>%
+    filter (databaseId %in% us_healthsys) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[B] US Health System Databases", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_US_healthsys_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#Non US 
+df_highcvr %>%
+    filter(cohortId =="301100020") %>%
+    filter (databaseId %in% non_us_database_list) %>%
+    mutate(databaseId = factor(databaseId, levels=c("ALPD","HIC","GDA","IMRD","SIDIAP","HKHA","FLPD" )))%>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[C] Non-US Databases", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,1) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_Non_US_databases_highcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+
+```
+
+
+
+
+#Lowcvr cohort line graphs
+```{r}
+
+
+# Make for GLP-1 RA
+
+#US National Databases
+df_lowcvr %>%
+    filter(cohortId =="201100010") %>%
+    filter (databaseId %in% us_national) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[A] US National Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_GLP1RA_US_National_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#US Health System Databases
+df_lowcvr %>%
+    filter(cohortId =="201100010") %>%
+    filter (databaseId %in% us_healthsys) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[B] US Health System Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_GLP1RA_US_healthsys_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+  
+
+#Non-USA
+df_lowcvr %>%
+    filter(cohortId =="201100010") %>%
+    filter (databaseId %in% non_us_database_list) %>%
+    mutate(databaseId = factor(databaseId, levels=c("ALPD","HIC","GDA","IMRD","SIDIAP","HKHA","FLPD" )))%>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[C] Non-US Databases", subtitle = "", 
+         y="Proportionate Incident Use of GLP-1 RA",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_GLP1RA_Non_US_databases_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#SGLT2i
+  
+#USA
+
+
+#US National Databases
+df_lowcvr %>%
+    filter(cohortId =="301100010") %>%
+    filter (databaseId %in% us_national) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[A] US National Databases", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_US_national_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+  
+  
+#US Health System Databases
+df_lowcvr %>%
+    filter(cohortId =="301100010") %>%
+    filter (databaseId %in% us_healthsys) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[B] US Health System Databases", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_US_healthsys_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+#Non US
+df_lowcvr %>%
+    filter(cohortId =="301100010") %>%
+    filter (databaseId %in% non_us_database_list) %>%
+    mutate(databaseId = factor(databaseId, levels=c("ALPD","HIC","GDA","IMRD","SIDIAP","HKHA","FLPD" )))%>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, color = databaseId )) + 
+    geom_line() + 
+    geom_point(size=2) +
+    labs(title = "[C] Non-US Databases", subtitle = "", 
+         y="Proportionate Incident Use of SGLT2i",x="Year of Second-line Agent Initiation", color="Database") +
+    scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_y_continuous(limits = c(0,0.8) ,  breaks=seq(0, 1, 0.2)) +
+    scale_color_d3()+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.justification = c("right", "top"),
+          legend.text=element_text(size=12))
+  ggsave(filename = ("Prop_SGLT2i_Non_US_databases_lowcvrCohort.png"), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+
+
+```
+
+
+
+#Main Cohorts Function and Loop - for combined figure
+```{r} 
+
+#Bar plots for each database with database_name as title
+
+df_main_discrete_years <- df_main
+df_main_discrete_years$calendarYear <- as.factor(df_main_discrete_years$calendarYear)
+
+make_bars_main <- function(database_name)
+{df_main_discrete_years %>%
+    filter(databaseId == database_name) %>%
+    ggplot(aes(x=calendarYear, y=prop_incidence, fill = cohortId )) + 
+    geom_bar(position = "fill", stat = "identity") +
+    labs(title = database_name , 
+         y="",x="", fill="") +
+    #scale_x_continuous(breaks=seq(2011, 2021, 1)) +
+    scale_x_discrete(limits = c('2011', '2012','2013', '2014','2015', '2016', '2017','2018', '2019', '2020', '2021')) + 
+    scale_y_continuous(breaks=seq(0, 1, 0.2)) +
+    scale_fill_nejm() +
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", hjust=0.5, size = 22),
+          plot.subtitle = element_text(face = "bold", hjust=0.5),
+          axis.title = element_text(face="bold", size = 11),
+          axis.text.x = element_text(face = "bold", angle = 45, vjust = 0.7 , hjust = 0.5),
+          axis.text.y = element_text(face = "bold", vjust = 0.5 , hjust = 0),
+          legend.position="none")
+  ggsave(filename = (paste0(database_name,"_MainCohort_BarGraph_Incident Second-line Agent Use.png")), 
+         device = "png", units="px", width=1800, height=1200, dpi=300)
+}
+
+for (database_name in database_list) {
+  make_bars_main(database_name)
+}
+
+
+
+```
+
+
+
+
+#Count Calculations
+```{r}
+
+database_year_cohortcounts <- df_main %>%
+  filter(databaseId %in% database_list) %>%
+  group_by(databaseId, calendarYear) %>%
+  mutate(sum_cohortCount = sum(cohortCount)) %>%
+  ungroup() %>%
+  select(databaseId,calendarYear, sum_cohortCount) %>%
+  distinct(databaseId, calendarYear,.keep_all = TRUE) %>%
+  spread(calendarYear, sum_cohortCount)
+database_year_cohortcounts
+
+
+database_counts <- df_main %>%
+  filter(databaseId %in% database_list) %>%
+  filter(calendarYear > 2010, calendarYear < 2022) %>%
+  group_by(databaseId) %>%
+  summarise(counts = sum(cohortCount))
+database_counts
+
+
+df_main_test <- df_main %>%
+  filter(cohortId =="201100000" | cohortId =="301100000") %>%
+  mutate(prop_cardioprotective= sum(prop_incidence))
+
+
+df_highcvr_test <- df_highcvr %>%
+  filter(cohortId =="201100020" | cohortId =="301100020") %>%
+  mutate(prop_cardioprotective= sum(prop_incidence))
+
+df_lowcvr_test <- df_lowcvr %>%
+  filter(cohortId =="201100010" | cohortId =="301100010") %>%
+  mutate(prop_cardioprotective= sum(prop_incidence))
+
+
+```
+
+Supplementary Tables: 
+
+```{r dem-data, eval = T, cache = T}
+connection <- connect(connectionDetails)
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = cohortIds,
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+databaseIds <- unique(counts$databaseId)
+
+testMissing <- function(data){
+    missingGender <- sapply(c(1:8), function(x)
+      nrow(data[[x]][data[[x]]$analysisId == 1,]) == 0)
+    missingRace <- sapply(c(1:8), function(x)
+      nrow(data[[x]][data[[x]]$analysisId == 4,]) == 0)
+    missingAge <- sapply(c(1:8), function(x)
+      nrow(data[[x]][data[[x]]$analysisId == 3,]) == 0)
+    out <- tibble(missingGender, missingRace, missingAge)
+    return(out)
+  }
+
+dir.create("./TableData/CVD")
+dir.create("./DemData/")
+for(databaseId in databaseIds){
+  data <- getData(cohortIds = cohortIds,
+                  cohortNames = cohortNames,
+                  databaseIds = databaseId)
+  counts <- getCohortCountResult(connection = connection,
+                                 cohortIds = cohortIds,
+                                 cohortNames = cohortNames,
+                                 databaseIds = databaseId) %>%
+    arrange(cohortId)
+  
+  test <- testMissing(data)
+  if(databaseId == "HK-HA-DM"){
+    test <- test[1:4,]
+    rows <- c(1:4)
+  } else{ 
+    rows <- c(1:8)}
+  
+  
+  if(TRUE %in% test$missingGender == FALSE){
+    genderTable <- lapply(rows, function(x) 
+    makePlotData(data[[x]],"./Specifications/CharTableGender.csv")) %>%
+    bind_rows()
+    genderTable$Characteristic <- str_replace(genderTable$Characteristic, 
+                                              "Gender = ", "") %>% 
+      str_to_title()
+    genderTable <- makeNiceTable(genderTable)
+  } else {genderTable <- NULL}
+  
+  if(TRUE %in% test$missingAge == FALSE){
+    ageTable <- lapply(rows, function(x) 
+      makePlotData(data[[x]],"./Specifications/CharTableAge.csv")) %>%
+      bind_rows() 
+    ageTable <- makeNiceTable(ageTable)
+  } else {ageTable <- NULL}
+  
+  if(TRUE %in% test$missingRace == FALSE){
+    raceTable <- lapply(rows, function(x) 
+      makePlotData(data[[x]],"./Specifications/CharTableRace.csv")) %>%
+      bind_rows()
+    raceTable$Characteristic <- str_replace(raceTable$Characteristic, 
+                                              "Race = ", "") %>% 
+      str_to_title()
+    raceTable <- makeNiceTable(raceTable)
+  } else {raceTable <- NULL}
+  
+  demDat <- rbind(genderTable$data,
+                  ageTable$data,
+                  raceTable$data)
+  if(!is.null(demDat) & databaseId == "HK-HA-DM"){
+    colnames(demDat) <- c("Characteristic", cohortNames[1:4])
+    saveRDS(demDat, paste0("./DemData/", databaseId, ".rds"))
+    demTable <- demDat %>% kable(format = "latex",
+                                 booktabs = T,
+                                 linesep = "")
+      
+    demTable %>%
+      write(file = paste0("./TableData/CVD", databaseId, ".tex"))
+  } else if(!is.null(demDat)){
+  demDat <- demDat[, c(1, 2, 4, 6, 8, 3, 5, 7, 9)]
+  colnames(demDat) <- c("Characteristic", cohortNames)
+  saveRDS(demDat, paste0("./DemData/", databaseId, ".rds"))
+  demTable <- demDat %>% kable(format = "latex",
+                               booktabs = T,
+                               linesep = "")
+    
+  demTable %>%
+    write(file = paste0("./TableData/CVD", databaseId, ".tex"))
+  }
+}
+```
+
+```{r hist-gold, eval = T}
+connection <- connect(connectionDetails)
+cohortIds <- c(101100000, 201100000, 
+               301100000, 401100000,
+               101100020, 201100020,
+               301100020, 401100020)
+cohortNames <- c("DDP4I", "GLP1RA","SGLT2I", "SU",
+                 "DDP4I high-cvr","GLP1RA high-cvr",
+                 "SGLT2I high-cvr","SU high-cvr")
+
+data <- getData(cohortIds = cohortIds,
+                cohortNames = cohortNames,
+                databaseIds = "OptumEHR")
+  
+medHistDat <- lapply(c(1:8), function(x) 
+  makePlotData(data[[x]],"./Specifications/ReviewMedHistCategory.csv")) %>%
+bind_rows()
+medHistTable <- makeNiceTable(medHistDat)
+gold <- medHistTable$data
+```
+
+```{r hist-data, cache = T, eval = T}
+connection <- connect(connectionDetails)
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = cohortIds,
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+databaseIds <- unique(counts$databaseId)
+
+testMissing1 <- function(data){
+    missing <- sapply(c(1:8), function(x)
+      nrow(data[[x]][data[[x]]$analysisId == 210,]) == 0)
+    return(missing)
+}
+
+for(databaseId in databaseIds){
+  data <- getData(cohortIds = cohortIds,
+                  cohortNames = cohortNames,
+                  databaseIds = databaseId)
+  counts <- getCohortCountResult(connection = connection,
+                                 cohortIds = cohortIds,
+                                 cohortNames = cohortNames,
+                                 databaseIds = databaseId) %>%
+    arrange(cohortId)
+  
+  test <- testMissing1(data)
+  if(TRUE %in% test == FALSE){
+    medHistDat <- lapply(c(1:8), function(x) 
+      makePlotData(data[[x]],"./Specifications/ReviewMedHistCategory.csv")) %>%
+    bind_rows()
+  } else {medHistDat <- NULL}
+  
+  if(!is.null(medHistDat)){
+    dir.create("./TableMed/CVD")
+    medHistTable <- makeNiceTable(medHistDat)
+    dat <- medHistTable$data[match(gold$Characteristic, medHistTable$data$Characteristic),] %>% na.omit()
+    dat <- dat[, c(1, 2, 4, 6, 8, 3, 5, 7, 9)]
+    colnames(dat) <- c("Characteristic", cohortNames)
+    saveRDS(dat, file = paste0("./TableMed/CVD", databaseId, ".rds"))
+    tableOut <- dat %>% kable(col.names = c("Characteristic",
+                                            rep(c("Count", "Proportion"), (ncol(dat) - 1)/2)),
+                              format = "latex",
+                              booktabs = T,
+                              linesep = "",
+                              align = c("l", rep("r", nrow(dat) - 1))) %>%
+    kable_styling(full_width = F) 
+    tableOut %>% write(file = paste0("./TableMedData/CVD", databaseId, ".tex"))
+  }
+}
+```
+
+```{r USMed}
+connection <- connect(connectionDetails)
+cohortNames <- c("DDP4I", "GLP1RA", "SGLT2I", "SU")
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = c(101100000, 201100000, 301100000, 401100000),
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+for(cohortName in cohortNames){
+databaseIds <- c("CCAE", "CUIMC", "JHM", "MDCD", "MDCR", 
+                 "OptumDod", "OptumEHR", "STARR", "US_Open_Claims",  "VA-OMOP")
+out <- readRDS("./TableMed/CVDCCAE.rds") %>% select(any_of(c("Characteristic", cohortName)))
+countsDDP4I <- counts[counts$cohortName == cohortName,]
+n <- countsDDP4I[countsDDP4I$databaseId == "CCAE", ]$cohortEntries
+colnames(out) <- c("Characteristic", paste0("CCAE (N = ", n, ")"))
+
+nlist <- n
+for(database in databaseIds[-1]){
+  n1 <- countsDDP4I[countsDDP4I$databaseId == database, ]$cohortEntries
+  nlist <- c(nlist, n1)
+  filename <- paste0("./TableMed/CVD", database, ".rds")
+  data <- readRDS(filename) %>% select(any_of(c("Characteristic", cohortName)))
+  names(data)[2] <- paste0(database, " (N = ", n1, ")")
+  out <- full_join(out, data, by = "Characteristic")
+}
+
+dir.create("./TableMedData/CVD")
+tableOut <- out %>% kable(format = "latex",
+                          booktabs = T,
+                          linesep = "",
+                          align = c("l", rep("r", nrow(out) - 1))) %>%
+    kable_styling(full_width = F) 
+    tableOut %>% write(file = paste0("./TableMedData/CVD", databaseId, ".tex"))
+
+file <- paste0("./TablesUS/", cohortName, ".tex")
+out[is.na(out)] <- "-"
+tableOut %>% write(file = file)  
+test <- readLines(file)
+header <- readLines(paste0("./TablesUS/Header.tex"))
+test <- test[-c(1:6)]
+table <- test
+table[2] <-str_replace(table[2],".\\}",paste0(".} ", cohortName,":")) %>% str_replace_all("_"," ")
+table <- table %>%
+    str_replace_all(" 0.0", " 0") %>%
+  str_replace_all("General & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{General}}\\\\")) %>%
+    str_replace_all("Musculoskeletal disorders & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Musculoskeletal disorders}}\\\\")) %>%
+    str_replace_all("Gastrointestinal disorders & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Gastrointestinal disorders}}\\\\")) %>%
+    str_replace_all("Endocrine disorders & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Endocrine disorders}}\\\\")) %>%
+    str_replace_all("Cardiovascular disease & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Cardiovascular disease}}\\\\")) %>%
+    str_replace_all("Neoplasms & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Neoplasms}}\\\\")) %>%
+    str_replace_all("Diabetes-related complications & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Diabetes-related complications}}\\\\")) %>%
+    str_replace_all("Other & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Other}}\\\\")) %>%
+    str_replace_all("Retinopathy due to diabetes mellitus", "Retinopathy") %>%
+    str_replace_all("Diabetic ketoacidosis", "Ketoacidosis") %>%
+    str_replace_all("Diabetic peripheral neuropathy", "Peripheral neuropathy") %>%
+    str_replace_all("Fracture of bone", "Bone fracture") %>%
+    str_replace_all("Malignant tumor of breast", "Malignant breast tumor") %>%
+    str_replace_all("Malignant tumor of urinary bladder", "Malignant urinary bladder tumor") %>%
+    str_replace_all("9999.0", "< 0.1") %>%
+  str_replace_all("n1", as.character(nlist[1])) %>%
+    str_replace_all("n2", as.character(nlist[2])) %>%
+    str_replace_all("n3", as.character(nlist[3])) %>%
+    str_replace_all("n4", as.character(nlist[4])) %>%
+    str_replace_all("n5", as.character(nlist[5])) %>%
+    str_replace_all("n6", as.character(nlist[6])) %>%
+    str_replace_all("n7", as.character(nlist[7])) %>%
+    str_replace_all("n8", as.character(nlist[8])) %>%
+  str_replace_all("n9", as.character(nlist[9])) %>%
+  str_replace_all("n10", as.character(nlist[10])) %>%
+  str_replace_all("OptumEHR", "OEHR") %>%
+  str_replace_all("US Open Claims", "USOC") %>%
+  str_replace_all("OptumDod", "OCEDM") %>%
+  str_replace_all("VA-OMOP", "VA") %>%
+  write(file = file)
+}
+```
+
+```{r IntlMed}
+connection <- connect(connectionDetails)
+cohortNames <- c("DDP4I", "GLP1RA", "SGLT2I", "SU")
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = c(101100000, 201100000, 301100000, 401100000),
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+for(cohortName in cohortNames){
+databaseIds <- c("Australia_LPD", "France_LPD", "Germany_DA", "HIC Dundee", "SIDIAP", "UK-IMRD")
+out <- readRDS("./TableMed/CVDAustralia_LPD.rds") %>% select(any_of(c("Characteristic", cohortName)))
+countsDDP4I <- counts[counts$cohortName == cohortName,]
+n <- countsDDP4I[countsDDP4I$databaseId == "Australia_LPD", ]$cohortEntries
+colnames(out) <- c("Characteristic", paste0("Australia LPD (N = ", n, ")"))
+
+nlist <- n
+for(database in databaseIds[-1]){
+  n1 <- countsDDP4I[countsDDP4I$databaseId == database, ]$cohortEntries
+  nlist <- c(nlist, n1)
+  filename <- paste0("./TableMed/CVD", database, ".rds")
+  data <- readRDS(filename) %>% select(any_of(c("Characteristic", cohortName)))
+  names(data)[2] <- paste0(database, " (N = ", n1, ")")
+  out <- full_join(out, data, by = "Characteristic")
+}
+out[is.na(out)] <- "-"
+tableOut <- out %>% kable(format = "latex",
+                          booktabs = T,
+                          linesep = "",
+                          align = c("l", rep("r", nrow(out) - 1))) %>%
+    kable_styling(full_width = F) 
+
+file <- paste0("./TablesIntl/", cohortName, ".tex")
+tableOut %>% write(file = file)  
+test <- readLines(file)
+header <- readLines(paste0("./TablesIntl/Header.tex"))
+test <- test[-c(1:6)]
+table <- test
+table[2] <-str_replace(table[2],".\\}",paste0(".} ", cohortName,":")) %>% str_replace_all("_"," ")
+table <- table %>%
+    str_replace_all(" 0.0", " 0") %>%
+  str_replace_all("General & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{General}}\\\\")) %>%
+    str_replace_all("Musculoskeletal disorders & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Musculoskeletal disorders}}\\\\")) %>%
+    str_replace_all("Gastrointestinal disorders & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Gastrointestinal disorders}}\\\\")) %>%
+    str_replace_all("Endocrine disorders & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Endocrine disorders}}\\\\")) %>%
+    str_replace_all("Cardiovascular disease & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Cardiovascular disease}}\\\\")) %>%
+    str_replace_all("Neoplasms & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Neoplasms}}\\\\")) %>%
+    str_replace_all("Diabetes-related complications & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Diabetes-related complications}}\\\\")) %>%
+    str_replace_all("Other & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Other}}\\\\")) %>%
+    str_replace_all("Retinopathy due to diabetes mellitus", "Retinopathy") %>%
+    str_replace_all("Diabetic ketoacidosis", "Ketoacidosis") %>%
+    str_replace_all("Diabetic peripheral neuropathy", "Peripheral neuropathy") %>%
+    str_replace_all("Fracture of bone", "Bone fracture") %>%
+    str_replace_all("Malignant tumor of breast", "Malignant breast tumor") %>%
+    str_replace_all("Malignant tumor of urinary bladder", "Malignant urinary bladder tumor") %>%
+  str_replace_all("_", " ") %>%
+  str_replace_all("9999.0", "< 0.1") %>%
+  str_replace_all("n1", as.character(nlist[1])) %>%
+    str_replace_all("n2", as.character(nlist[2])) %>%
+    str_replace_all("n3", as.character(nlist[3])) %>%
+    str_replace_all("n4", as.character(nlist[4])) %>%
+    str_replace_all("n5", as.character(nlist[5])) %>%
+    str_replace_all("n6", as.character(nlist[6])) %>%
+  write(file = file)
+}
+```
+
+```{r USDem}
+connection <- connect(connectionDetails)
+cohortNames <- c("DDP4I", "GLP1RA", "SGLT2I", "SU")
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = c(101100000, 201100000, 301100000, 401100000),
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+for(cohortName in cohortNames){
+databaseIds <- c("CCAE", "CUIMC", "JHM", "MDCD", "MDCR", 
+                 "OptumDod", "OptumEHR", "STARR", "US_Open_Claims", "VA-OMOP")
+out <- readRDS("./DemData/CCAE.rds") %>% select(any_of(c("Characteristic", cohortName)))
+countsDDP4I <- counts[counts$cohortName == cohortName,]
+n <- countsDDP4I[countsDDP4I$databaseId == "CCAE", ]$cohortEntries
+colnames(out) <- c("Characteristic", paste0("CCAE (N = ", n, ")"))
+
+nlist <- n
+for(database in databaseIds[-1]){
+  n1 <- countsDDP4I[countsDDP4I$databaseId == database, ]$cohortEntries
+  nlist <- c(nlist, n1)
+  filename <- paste0("./DemData/", database, ".rds")
+  data <- readRDS(filename) %>% select(any_of(c("Characteristic", cohortName)))
+  names(data)[2] <- paste0(database, " (N = ", n1, ")")
+  out <- full_join(out, data, by = "Characteristic")
+}
+out <- out[-c(27,31),]
+ages <- out[5:21,]
+ages[,2:ncol(out)] <- sapply(ages[,2:ncol(out)], as.numeric)
+ages[ages == 9999] <- 0
+ages[is.na(ages)] <- 0
+
+ages <- rbind(colSums(ages[1:6,2:ncol(out)]),
+              colSums(ages[7:10, 2:ncol(out)]),
+              colSums(ages[11:14, 2:ncol(out)]),
+              colSums(ages[15:17, 2:ncol(out)]))
+ages <- format(ages, nsmall = 1)
+Characteristic <- c(" < 45", " 45 -  64", " 65 -  84", " > 85")
+ages <- cbind(Characteristic, ages)
+
+races <- out[22:31,]
+races[,2:ncol(out)] <- sapply(races[,2:ncol(out)], as.numeric)
+races[is.na(races)] <- 0
+races[races == 9999] <- 0
+raceSum <- colSums(races[,2:ncol(out)])
+raceSum <- 100 - raceSum %>% round(digits = 1)
+raceSum <- rbind(races[races$Characteristic == "Declines To State" | races$Characteristic == "Unknown", 2:ncol(out)], raceSum) %>% sapply(as.numeric)
+raceSum <- colSums(raceSum)
+raceSum <- format(raceSum, nsmall = 1)
+raceSum <- c("Unknown/Missing", raceSum)
+names(raceSum)[1] <- "Characteristic"
+races <- rbind(races, raceSum)
+races[rbind(out[22:31,], rep(NA, ncol(out))) == "9999.0"] <- "< 0.1"
+
+pacSum <- races[races$Characteristic == "Other Pacific Islander" | races$Characteristic == "Native Hawaiian Or Other Pacific Islander", 2:ncol(out)] %>% sapply(as.numeric) %>% colSums()
+pacSum[is.na(pacSum)] <- "< 0.1"
+races[races$Characteristic == "Native Hawaiian Or Other Pacific Islander", 2:ncol(out)] <- as.list(pacSum)
+
+races <- races[-c(6, 8, 9),]
+
+out <- rbind(out[1:4,], ages, races)
+
+tableOut <- out %>% kable(format = "latex",
+                          booktabs = T,
+                          linesep = "",
+                          align = c("l", rep("r", nrow(out) - 1))) %>%
+    kable_styling(full_width = F) 
+
+file <- paste0("./TablesUSDem/", cohortName, ".tex")
+tableOut %>% write(file = file)  
+test <- readLines(file)
+header <- readLines(paste0("./TablesUSDem/Header.tex"))
+test <- test[-c(1:6)]
+table <- c(header, test)
+table <- table[-c(44, 48, 49, 50)]
+table <- head(table, -3)
+#table[2] <-str_replace(table[2],".\\}",paste0(".} ", cohortName,":")) %>% str_replace_all("_"," ")
+table <- table %>% 
+    str_replace_all("n1", as.character(nlist[1])) %>%
+    str_replace_all("n2", as.character(nlist[2])) %>%
+    str_replace_all("n3", as.character(nlist[3])) %>%
+    str_replace_all("n4", as.character(nlist[4])) %>%
+    str_replace_all("n5", as.character(nlist[5])) %>%
+    str_replace_all("n6", as.character(nlist[6])) %>%
+    str_replace_all("n7", as.character(nlist[7])) %>%
+    str_replace_all("n8", as.character(nlist[8])) %>%
+    str_replace_all("n9", as.character(nlist[9])) %>%
+    str_replace_all("n10", as.character(nlist[10])) %>%
+    str_replace_all(" 0.0", " 0") %>%
+    str_replace_all("Gender & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Gender}}\\\\")) %>%
+    str_replace_all("Age group & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Age group}}\\\\")) %>%
+    str_replace_all("Race & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{10}{l}{\\\\textbf{Race}}\\\\")) %>%
+    str_replace_all("9999.0", "< 0.1") %>% 
+    str_replace_all("OptumEHR", "OEHR") %>%
+    str_replace_all("US Open Claims", "USOC") %>%
+    str_replace_all("OptumDod", "OCEDM") %>%
+    str_replace_all("VA-OMOP", "VA") %>%
+  write(file = file)
+}
+```
+
+```{r IntlDem}
+connection <- connect(connectionDetails)
+cohortNames <- c("DDP4I", "GLP1RA", "SGLT2I", "SU")
+counts <- getCohortCountResult(connection = connection,
+                               cohortIds = c(101100000, 201100000, 301100000, 401100000),
+                               cohortNames = cohortNames,
+                               databaseIds = NULL)
+for(cohortName in cohortNames){
+databaseIds <- c("Australia_LPD", "France_LPD", "Germany_DA", "HIC Dundee", "SIDIAP", "UK-IMRD")
+out <- readRDS("./DemData/Australia_LPD.rds") %>% select(any_of(c("Characteristic", cohortName)))
+countsDDP4I <- counts[counts$cohortName == cohortName,]
+n <- countsDDP4I[countsDDP4I$databaseId == "Australia_LPD", ]$cohortEntries
+colnames(out) <- c("Characteristic", paste0("Australia LPD (N = ", n, ")"))
+
+nlist <- n
+for(database in databaseIds[-1]){
+  n1 <- countsDDP4I[countsDDP4I$databaseId == database, ]$cohortEntries
+  nlist <- c(nlist, n1)
+  filename <- paste0("./DemData/", database, ".rds")
+  data <- readRDS(filename) %>% select(any_of(c("Characteristic", cohortName)))
+  names(data)[2] <- paste0(database, " (N = ", n1, ")")
+  out <- full_join(out, data, by = "Characteristic")
+}
+
+out <- out[c(1:4, 20, 5:19, 21:35), ]
+out <- out[-31,]
+
+ages <- out[5:21,]
+ages[,2:7] <- sapply(ages[,2:7], as.numeric)
+ages[ages == 9999] <- 0
+ages[is.na(ages)] <- 0
+
+ages <- rbind(colSums(ages[1:6,2:7]),
+              colSums(ages[7:10, 2:7]),
+              colSums(ages[11:14, 2:7]),
+              colSums(ages[15:17, 2:7]))
+ages <- format(ages, nsmall = 1)
+Characteristic <- c(" < 45", " 45 -  64", " 65 -  84", " > 85")
+ages <- cbind(Characteristic, ages)
+
+races <- out[22:34,]
+races[,2:7] <- sapply(races[,2:7], as.numeric)
+races[is.na(races)] <- 0
+races[races == 9999] <- 0
+raceSum <- colSums(races[,2:7])
+raceSum <- 100 - raceSum %>% round(digits = 1)
+raceSum <- format(raceSum, nsmall = 1)
+raceSum <- c("Missing", raceSum)
+names(raceSum)[1] <- "Characteristic"
+races <- rbind(races, raceSum)
+races[rbind(out[22:34,], rep(NA, 10)) == "9999.0"] <- "< 0.1"
+
+asianSum <- races[races$Characteristic == "Asian" | races$Characteristic == "Asian Indian" | races$Characteristic == "Bangladeshi" | races$Characteristic == "Pakistani" | races$Characteristic == "Nepalese" | races$Characteristic == "Chinese", 2:7]
+asianSum <- sapply(asianSum, as.numeric)
+asianSum[is.na(asianSum)] <- 0
+asianSum <- colSums(asianSum) %>% round(digits = 1) 
+
+otherComp <- races[races$Characteristic == "White" | races$Characteristic == "Missing" | races$Characteristic == "Black", 2:7]
+otherComp <- sapply(otherComp, as.numeric)
+otherComp <- colSums(otherComp) + asianSum
+otherSum <- 100 - otherComp %>% round(digits = 1)
+otherSum <- format(otherSum, nsmall = 1)
+otherSum <- c("Other", otherSum)
+
+asianSum <- format(asianSum, nsmall = 1)
+asianSum <- c("Asian", asianSum)
+
+races <- rbind(races[c(1, 9, 10),], asianSum, otherSum, raceSum)
+
+out <- rbind(out[1:4,], ages, races)
+
+tableOut <- out %>% kable(format = "latex",
+                          booktabs = T,
+                          linesep = "",
+                          align = c("l", rep("r", nrow(out) - 1))) %>%
+    kable_styling(full_width = F) 
+
+file <- paste0("./TablesIntlDem/", cohortName, ".tex")
+tableOut %>% write(file = file)  
+test <- readLines(file)
+header <- readLines(paste0("./TablesIntlDem/Header.tex"))
+test <- test[-c(1:6)]
+table <- c(header, test)
+table <- table[-44]
+table <- head(table, -3)
+#table[2] <-str_replace(table[2],".\\}",paste0(".} ", cohortName,":")) %>% str_replace_all("_"," ")
+table <- table %>% 
+    str_replace_all("n1", as.character(nlist[1])) %>%
+    str_replace_all("n2", as.character(nlist[2])) %>%
+    str_replace_all("n3", as.character(nlist[3])) %>%
+    str_replace_all("n4", as.character(nlist[4])) %>%
+    str_replace_all("n5", as.character(nlist[5])) %>%
+    str_replace_all("n6", as.character(nlist[6])) %>%
+    str_replace_all(" 0.0", " 0") %>%
+    str_replace_all("Gender & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Gender}}\\\\")) %>%
+    str_replace_all("Age group & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Age group}}\\\\")) %>%
+    str_replace_all("Race & 0 & 0 & 0 & 0 & 0 & 0\\\\",
+                    paste("\\\\multicolumn{7}{l}{\\\\textbf{Race}}\\\\")) %>%
+    str_replace_all("9999.0", "< 0.1") %>%
+    str_replace_all("Missing", "Unknown/Missing") %>%
+    str_replace_all("France LPD", "FLDP") %>%
+    str_replace_all("Germany DA", "GDA") %>%
+    str_replace_all("HIC Dundee", "HIC") %>%
+    str_replace_all("Australia LPD", "ALPD") %>%
+    str_replace_all("UK IMRD", "IMRD") %>%
+  write(file = file)
+}
+```
+
+```{r DemTableCombined}
+for(cohortName in cohortNames){
+  fileDem <- paste0("./TablesUSDem/", cohortName, ".tex")
+  fileMed <- paste0("./TablesUS/", cohortName, ".tex")
+  file <- paste0("./TablesUSCombined/", cohortName, ".tex")
+  dem <- readLines(fileDem)
+  med <- readLines(fileMed)
+  out <- c(dem, med)
+  out %>% write(file = file)
+}
+```
+
+```{r IntlTableCombined}
+for(cohortName in cohortNames){
+  fileDem <- paste0("./TablesIntlDem/", cohortName, ".tex")
+  fileMed <- paste0("./TablesIntl/", cohortName, ".tex")
+  file <- paste0("./TablesIntlCombined/", cohortName, ".tex")
+  dem <- readLines(fileDem)
+  med <- readLines(fileMed)
+  out <- c(dem, med)
+  out %>% write(file = file)
+}
+```
+
+Order of tables:
+US:
+- DDP4I
+- GLP1RA
+- SGLT2I
+- SU
+International:
+- DDP4I
+- GLP1RA
+- SGLT2I
+- SU
+\begin{landscape}
+\input{TablesUSCombined/DDP4I.tex}
+\input{TablesUSCombined/GLP1RA.tex}
+\input{TablesUSCombined/SGLT2I.tex}
+\input{TablesUSCombined/SU.tex}
+\end{landscape}
+\input{TablesIntlCombined/DDP4I.tex}
+\input{TablesIntlCombined/GLP1RA.tex}
+\input{TablesIntlCombined/SGLT2I.tex}
+\input{TablesIntlCombined/SU.tex}
